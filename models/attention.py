@@ -170,7 +170,7 @@ class ChannelAttention(Layer):
         self.kernel_initializer = kernel_initializer
 
     def build(self, input_shape):
-        self.avg_pool = GlobalAveragePooling2D()
+        self.avg_pool = GlobalAveragePooling2D(keepdims=True)
         self.conv1 = Conv2D(filters=input_shape[-1]//self.reduction,
                             kernel_size=(1, 1),
                             strides=(1, 1),

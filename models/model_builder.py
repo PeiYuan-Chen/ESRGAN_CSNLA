@@ -2,7 +2,7 @@ import tensorflow as tf
 from tensorflow.keras.layers import Input, Conv2D, BatchNormalization, LeakyReLU, UpSampling2D, Flatten, Dense, add, Lambda
 from tensorflow.keras.models import Model
 from utils.conv2D_args import k3n64s1, k3n3s1
-from models.backbone.RRDB import residual_in_residual_dense_block
+from models.backbone.RRDB import residual_in_residual_channel_attention_dense_block
 from train_utils.sn import SpectralNormalization
 from models.attention import in_scale_non_local_attention_residual_block
 
@@ -19,25 +19,25 @@ def generator(kernel_initializer=tf.keras.initializers.GlorotNormal()):
     # trunk
     lsc = x
     for _ in range(6):
-        x = residual_in_residual_dense_block(
+        x = residual_in_residual_channel_attention_dense_block(
             x, kernel_initializer=kernel_initializer)
     x = in_scale_non_local_attention_residual_block(
         input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
 
     for _ in range(6):
-        x = residual_in_residual_dense_block(
+        x = residual_in_residual_channel_attention_dense_block(
             x, kernel_initializer=kernel_initializer)
     x = in_scale_non_local_attention_residual_block(
         input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
 
     for _ in range(6):
-        x = residual_in_residual_dense_block(
+        x = residual_in_residual_channel_attention_dense_block(
             x, kernel_initializer=kernel_initializer)
     x = in_scale_non_local_attention_residual_block(
         input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
 
     for _ in range(5):
-        x = residual_in_residual_dense_block(
+        x = residual_in_residual_channel_attention_dense_block(
             x, kernel_initializer=kernel_initializer)
 
     x = Conv2D(kernel_initializer=kernel_initializer, **k3n64s1)(x)
@@ -77,25 +77,25 @@ def generator_x4(kernel_initializer=tf.keras.initializers.GlorotNormal()):
     # trunk
     lsc = x
     for _ in range(6):
-        x = residual_in_residual_dense_block(
+        x = residual_in_residual_channel_attention_dense_block(
             x, kernel_initializer=kernel_initializer)
     x = in_scale_non_local_attention_residual_block(
         input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
 
     for _ in range(6):
-        x = residual_in_residual_dense_block(
+        x = residual_in_residual_channel_attention_dense_block(
             x, kernel_initializer=kernel_initializer)
     x = in_scale_non_local_attention_residual_block(
         input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
 
     for _ in range(6):
-        x = residual_in_residual_dense_block(
+        x = residual_in_residual_channel_attention_dense_block(
             x, kernel_initializer=kernel_initializer)
     x = in_scale_non_local_attention_residual_block(
         input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
 
     for _ in range(5):
-        x = residual_in_residual_dense_block(
+        x = residual_in_residual_channel_attention_dense_block(
             x, kernel_initializer=kernel_initializer)
 
     x = Conv2D(kernel_initializer=kernel_initializer, **k3n64s1)(x)
