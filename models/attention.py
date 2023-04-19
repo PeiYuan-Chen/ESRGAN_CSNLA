@@ -1,6 +1,6 @@
 import tensorflow as tf
 import numpy as np
-from tensorflow.keras.layers import Conv2D, Reshape, Softmax, add, PReLU, LayerNormalization, Layer
+from tensorflow.keras.layers import Conv2D, Reshape, Softmax, add, PReLU, Layer, GlobalAveragePooling2D, multiply
 
 
 def cross_scale_non_local_attention(input_tensor, channel_reduction=2, scale=3, patch_size=3, softmax_factor=10):
@@ -161,3 +161,35 @@ def in_scale_non_local_attention_residual_block(input_tensor, channel_reduction=
                                  softmax_factor=softmax_factor,
                                  kernel_initializer=kernel_initializer,)(input_tensor)
     return add([input_tensor, x])
+
+
+class ChannelAttention(Layer):
+    def __init__(self, reduction=16, kernel_initializer=tf.keras.initializers.GlorotNormal(), **kwargs):
+        super(ChannelAttention, self).__init__(**kwargs)
+        self.reduction = reduction
+        self.kernel_initializer = kernel_initializer
+
+    def build(self, input_shape):
+        self.avg_pool = GlobalAveragePooling2D()
+        self.conv1 = Conv2D(filters=input_shape[-1]//self.reduction,
+                            kernel_size=(1, 1),
+                            strides=(1, 1),
+                            padding='same',
+                            activation='relu',
+                            kernel_initializer=self.kernel_initializer,)
+        self.conv2 = Conv2D(filters=input_shape[-1],
+                            kernel_size=(1, 1),
+                            strides=(1, 1),
+                            padding='same',
+                            activation='sigmoid',
+                            kernel_initializer=self.kernel_initializer,)
+
+        self.reshape = Reshape(target_shape=(1, 1, input_shape[-1]))
+        return super().build(input_shape)
+
+    def call(self, inputs, *args, **kwargs):
+        x = self.avg_pool(inputs)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.reshape(x)
+        return multiply([inputs, x])
