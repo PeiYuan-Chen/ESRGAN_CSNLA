@@ -1,9 +1,10 @@
 import tensorflow as tf
-from tensorflow.keras.layers import Input, Conv2D, BatchNormalization, LeakyReLU, UpSampling2D, Flatten, Dense, add
+from tensorflow.keras.layers import Input, Conv2D, BatchNormalization, LeakyReLU, UpSampling2D, Flatten, Dense, add, Lambda
 from tensorflow.keras.models import Model
 from utils.conv2D_args import k3n64s1, k3n3s1
 from models.backbone.RRDB import residual_in_residual_dense_block
 from train_utils.sn import SpectralNormalization
+from models.attention import in_scale_non_local_attention_residual_block
 
 
 def generator(kernel_initializer=tf.keras.initializers.GlorotNormal()):
@@ -12,13 +13,38 @@ def generator(kernel_initializer=tf.keras.initializers.GlorotNormal()):
     x = tf.keras.layers.Rescaling(scale=1.0 / 255)(inputs)
     # shallow extraction
     x = Conv2D(kernel_initializer=kernel_initializer, **k3n64s1)(x)
+    x = in_scale_non_local_attention_residual_block(
+        input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
+
     # trunk
     lsc = x
-    for _ in range(23):
+    for _ in range(6):
         x = residual_in_residual_dense_block(
             x, kernel_initializer=kernel_initializer)
+    x = in_scale_non_local_attention_residual_block(
+        input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
+
+    for _ in range(6):
+        x = residual_in_residual_dense_block(
+            x, kernel_initializer=kernel_initializer)
+    x = in_scale_non_local_attention_residual_block(
+        input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
+
+    for _ in range(6):
+        x = residual_in_residual_dense_block(
+            x, kernel_initializer=kernel_initializer)
+    x = in_scale_non_local_attention_residual_block(
+        input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
+
+    for _ in range(5):
+        x = residual_in_residual_dense_block(
+            x, kernel_initializer=kernel_initializer)
+
     x = Conv2D(kernel_initializer=kernel_initializer, **k3n64s1)(x)
     x = add([x, lsc])
+
+    x = in_scale_non_local_attention_residual_block(
+        input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
     # upsample nearest
     x = UpSampling2D(size=(2, 2), interpolation='nearest')(x)
     x = Conv2D(kernel_initializer=kernel_initializer, **k3n64s1)(x)
@@ -37,18 +63,46 @@ def generator(kernel_initializer=tf.keras.initializers.GlorotNormal()):
 
 
 def generator_x4(kernel_initializer=tf.keras.initializers.GlorotNormal()):
+    # inputs = Input(shape=(input_height, input_width, 3))
     inputs = Input(shape=(None, None, 3))
     # pre-process
     x = tf.keras.layers.Rescaling(scale=1.0 / 255)(inputs)
+
     # shallow extraction
     x = Conv2D(kernel_initializer=kernel_initializer, **k3n64s1)(x)
+
+    x = in_scale_non_local_attention_residual_block(
+        input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
+
     # trunk
     lsc = x
-    for _ in range(23):
+    for _ in range(6):
         x = residual_in_residual_dense_block(
             x, kernel_initializer=kernel_initializer)
+    x = in_scale_non_local_attention_residual_block(
+        input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
+
+    for _ in range(6):
+        x = residual_in_residual_dense_block(
+            x, kernel_initializer=kernel_initializer)
+    x = in_scale_non_local_attention_residual_block(
+        input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
+
+    for _ in range(6):
+        x = residual_in_residual_dense_block(
+            x, kernel_initializer=kernel_initializer)
+    x = in_scale_non_local_attention_residual_block(
+        input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
+
+    for _ in range(5):
+        x = residual_in_residual_dense_block(
+            x, kernel_initializer=kernel_initializer)
+
     x = Conv2D(kernel_initializer=kernel_initializer, **k3n64s1)(x)
     x = add([x, lsc])
+
+    x = in_scale_non_local_attention_residual_block(
+        input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
     # upsample nearest
     x = UpSampling2D(size=(2, 2), interpolation='nearest')(x)
     x = Conv2D(kernel_initializer=kernel_initializer, **k3n64s1)(x)

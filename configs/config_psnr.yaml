@@ -1,6 +1,6 @@
 # Data settings
 data:
-  Use_TFRecord: True
+  Use_TFRecord: False
   TFRecord_file: 'E:/SR_Train_Data/DF2K_bicubic_x4.tfrecord'
   train_lr_dir: 'data/train/lr_x4'
   train_hr_dir: 'data/train/hr'

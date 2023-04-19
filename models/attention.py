@@ -1,55 +1,9 @@
 import tensorflow as tf
-from tensorflow.keras.layers import Conv2D, Reshape, Softmax, add, PReLU, LayerNormalization
+import numpy as np
+from tensorflow.keras.layers import Conv2D, Reshape, Softmax, add, PReLU, LayerNormalization, Layer
 
 
-def in_scale_non_local_attention(input_tensor, channel_reduction=2, softmax_factor=6):
-    # input_tensor (b,h,w,c)
-    batch_size, height, width, channels = input_tensor.shape
-    inter_channels = channels // channel_reduction
-
-    theta = Conv2D(filters=inter_channels,
-                   kernel_size=(1, 1),
-                   strides=1,
-                   padding='same',)(input_tensor)
-    theta = LayerNormalization()(theta)  # Normalize along the channel
-    # activation
-    phi = Conv2D(filters=inter_channels,
-                 kernel_size=(1, 1),
-                 strides=1,
-                 padding='same',)(input_tensor)
-    phi = LayerNormalization()(phi)  # Normalize along the channel
-
-    # activation
-    g = Conv2D(filters=inter_channels,
-               kernel_size=(1, 1),
-               strides=1,
-               padding='same',)(input_tensor)
-    g = LayerNormalization()(g)  # Normalize along the channel
-    # activation
-    # theta,phi,g (b,h,w,c//2)
-    theta_flat = tf.reshape(tensor=theta,
-                            shape=(batch_size, height*width, inter_channels))
-    phi_flat = tf.reshape(tensor=phi,
-                          shape=(batch_size, height*width, inter_channels))
-    g_flat = tf.reshape(tensor=g,
-                        shape=(batch_size, height*width, inter_channels))
-    # theta_flat, phi_flat g_flat (b,h*w,c//2)
-    attention_map = tf.matmul(theta_flat, phi_flat,
-                              transpose_b=True)  # (b,h*w,h*w)
-    attention_map_softmax = tf.nn.softmax(
-        attention_map*softmax_factor, axis=-1)
-
-    y = tf.matmul(attention_map_softmax, g_flat)  # (b,h*w,c//2)
-    y = tf.reshape(tensor=y,
-                   shape=(batch_size, height, width, inter_channels))
-    y = Conv2D(filters=channels,
-               kernel_size=(1, 1),
-               strides=(1, 1),
-               padding='same')(y)
-    return y
-
-
-def cross_scale_non_local_attention(input_tensor, channel_reduction=2, scale=3, patch_size=3, softmax_scale=10):
+def cross_scale_non_local_attention(input_tensor, channel_reduction=2, scale=3, patch_size=3, softmax_factor=10):
     batch_size, height, width, channels = input_tensor.shape
     inter_channels = channels // channel_reduction
     inter_height = height // scale
@@ -118,7 +72,7 @@ def cross_scale_non_local_attention(input_tensor, channel_reduction=2, scale=3, 
                            strides=(1, 1),
                            padding='same',
                            data_format='NHWC')  # (1,h,w,N)
-        y_i_softmax = tf.nn.softmax(y_i*softmax_scale, axis=-1)  # feature map
+        y_i_softmax = tf.nn.softmax(y_i*softmax_factor, axis=-1)  # feature map
 
         # g_patch_i (s*p,s*p,c,N)
         g_patch_i = tf.transpose(g_patch_i, perm=[1, 2, 3, 0])
@@ -133,3 +87,77 @@ def cross_scale_non_local_attention(input_tensor, channel_reduction=2, scale=3, 
         y.append(y_i)
     y = tf.concat(y, axis=0)
     return y
+
+
+class InsclaeNonLocalAttention(Layer):
+    def __init__(self, channel_reduction=2,  softmax_factor=6, kernel_initializer=tf.keras.initializers.GlorotNormal(), **kwargs):
+        super(InsclaeNonLocalAttention, self).__init__(**kwargs)
+        self.channel_reduction = channel_reduction
+        self.softmax_factor = softmax_factor
+        self.kernel_initializer = kernel_initializer
+
+    def build(self, input_shape):
+        channels = input_shape[-1]
+        inter_channels = channels // self.channel_reduction
+
+        self.theta = Conv2D(filters=inter_channels,
+                            kernel_size=(1, 1),
+                            strides=(1, 1),
+                            padding='same',
+                            kernel_initializer=self.kernel_initializer,)
+
+        self.phi = Conv2D(filters=inter_channels,
+                          kernel_size=(1, 1),
+                          strides=(1, 1),
+                          padding='same',
+                          kernel_initializer=self.kernel_initializer,)
+        self.g = Conv2D(filters=inter_channels,
+                        kernel_size=(1, 1),
+                        strides=(1, 1),
+                        padding='same',
+                        kernel_initializer=self.kernel_initializer,)
+        self.y = Conv2D(filters=channels,
+                        kernel_size=(1, 1),
+                        strides=(1, 1),
+                        padding='same',
+                        kernel_initializer=self.kernel_initializer,)
+
+        return super().build(input_shape)
+
+    def call(self, inputs, *args, **kwargs):
+        dynamic_shape = tf.shape(inputs)
+        _, height, width, channels = dynamic_shape[
+            0], dynamic_shape[1], dynamic_shape[2], dynamic_shape[3]
+
+        inter_channels = channels // self.channel_reduction
+        theta = self.theta(inputs)  # (b,h,w,c/2)
+        phi = self.phi(inputs)  # (b,h,w,c/2)
+        g = self.g(inputs)  # (b,h,w,c/2)
+
+        theta_flat = tf.reshape(theta, shape=(
+            -1, height*width, inter_channels))  # (b,h*w,c/2)
+        phi_flat = tf.reshape(phi, shape=(
+            -1, height*width, inter_channels))  # (b,h*w,c/2)
+        g_flat = tf.reshape(
+            g, shape=(-1, height*width, inter_channels))  # (b,h*w,c/2)
+        # theta_flat = self.reshape_flat(theta)  # (b,h*w,c/2)
+        # phi_flat = self.reshape_flat(phi)  # (b,h*w,c/2)
+        # g_flat = self.reshape_flat(g)  # (b,h*w,c/2)
+
+        attention_map = tf.matmul(
+            theta_flat, phi_flat, transpose_b=True)  # (b,h*w,h*w)
+        attention_map_softmax = tf.nn.softmax(
+            attention_map*self.softmax_factor, axis=-1)  # feature map
+
+        y = tf.matmul(attention_map_softmax, g_flat)  # (b,h*w,c/2)
+        # y = Reshape(target_shape=(height, width, inter_channels))(y)  # (b,h,w,c/2)
+        y = tf.reshape(y, shape=(-1, height, width, inter_channels))
+        y = self.y(y)  # (b,h,w,c)
+        return y
+
+
+def in_scale_non_local_attention_residual_block(input_tensor, channel_reduction=2, softmax_factor=6, kernel_initializer=tf.keras.initializers.GlorotNormal()):
+    x = InsclaeNonLocalAttention(channel_reduction=channel_reduction,
+                                 softmax_factor=softmax_factor,
+                                 kernel_initializer=kernel_initializer,)(input_tensor)
+    return add([input_tensor, x])
