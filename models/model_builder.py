@@ -1,10 +1,10 @@
 import tensorflow as tf
-from tensorflow.keras.layers import Input, Conv2D, BatchNormalization, LeakyReLU, UpSampling2D, Flatten, Dense, add, Lambda
+from tensorflow.keras.layers import Input, Conv2D, BatchNormalization, LeakyReLU, UpSampling2D, Flatten, Dense, add, Lambda, concatenate
 from tensorflow.keras.models import Model
 from utils.conv2D_args import k3n64s1, k3n3s1
 from models.backbone.RRDB import residual_in_residual_channel_attention_dense_block
 from train_utils.sn import SpectralNormalization
-from models.attention import in_scale_non_local_attention_residual_block
+from models.attention import in_scale_non_local_attention_residual_block, CrossScaleNonLocalAttention
 
 
 def generator(kernel_initializer=tf.keras.initializers.GlorotNormal()):
@@ -73,6 +73,8 @@ def generator_x4(kernel_initializer=tf.keras.initializers.GlorotNormal()):
 
     x = in_scale_non_local_attention_residual_block(
         input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
+    c1 = CrossScaleNonLocalAttention(channel_reduction=2, scale=4, patch_size=3,
+                                     softmax_factor=10, kernel_initializer=kernel_initializer)(x)
 
     # trunk
     lsc = x
@@ -81,18 +83,24 @@ def generator_x4(kernel_initializer=tf.keras.initializers.GlorotNormal()):
             x, kernel_initializer=kernel_initializer)
     x = in_scale_non_local_attention_residual_block(
         input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
+    c2 = CrossScaleNonLocalAttention(channel_reduction=2, scale=4, patch_size=3,
+                                     softmax_factor=10, kernel_initializer=kernel_initializer)(x)
 
     for _ in range(6):
         x = residual_in_residual_channel_attention_dense_block(
             x, kernel_initializer=kernel_initializer)
     x = in_scale_non_local_attention_residual_block(
         input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
+    c3 = CrossScaleNonLocalAttention(channel_reduction=2, scale=4, patch_size=3,
+                                     softmax_factor=10, kernel_initializer=kernel_initializer)(x)
 
     for _ in range(6):
         x = residual_in_residual_channel_attention_dense_block(
             x, kernel_initializer=kernel_initializer)
     x = in_scale_non_local_attention_residual_block(
         input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
+    c4 = CrossScaleNonLocalAttention(channel_reduction=2, scale=4, patch_size=3,
+                                     softmax_factor=10, kernel_initializer=kernel_initializer)(x)
 
     for _ in range(5):
         x = residual_in_residual_channel_attention_dense_block(
@@ -103,16 +111,25 @@ def generator_x4(kernel_initializer=tf.keras.initializers.GlorotNormal()):
 
     x = in_scale_non_local_attention_residual_block(
         input_tensor=x, channel_reduction=2, softmax_factor=6, kernel_initializer=kernel_initializer)
+    c5 = CrossScaleNonLocalAttention(channel_reduction=2, scale=4, patch_size=3,
+                                     softmax_factor=10, kernel_initializer=kernel_initializer)(x)
     # upsample nearest
     x = UpSampling2D(size=(2, 2), interpolation='nearest')(x)
     x = Conv2D(kernel_initializer=kernel_initializer, **k3n64s1)(x)
     x = LeakyReLU(alpha=0.2)(x)
-    x = UpSampling2D(size=(2, 2), interpolation='nearest',
-                     name='additional_start_layer')(x)
-    x = Conv2D(kernel_initializer=kernel_initializer, **k3n64s1)(x)
-    x = LeakyReLU(alpha=0.2, name='additional_end_layer')(x)
+    # x = UpSampling2D(size=(2, 2), interpolation='nearest',
+    #                  name='additional_start_layer')(x)
+    # x = Conv2D(kernel_initializer=kernel_initializer, **k3n64s1)(x)
+    # x = LeakyReLU(alpha=0.2, name='additional_end_layer')(x)
+    x = Conv2D(filters=256,
+               kernel_size=(3, 3),
+               strides=(1, 1),
+               padding='same',
+               kernel_initializer=kernel_initializer)(x)
+    x = tf.nn.depth_to_space(x, block_size=2)
 
     # reconstruct
+    x = concatenate([x, c5, c4, c3, c2, c1], axis=-1)
     x = Conv2D(kernel_initializer=kernel_initializer, **k3n64s1)(x)
     x = LeakyReLU(alpha=0.2)(x)
     x = Conv2D(kernel_initializer=kernel_initializer, **k3n3s1)(x)

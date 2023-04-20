@@ -38,7 +38,7 @@ class CrossScaleNonLocalAttention(Layer):
         self.g_PRelu = PReLU(shared_axes=[1, 2])
         return super().build(input_shape)
 
-    @tf.function
+    # @tf.function
     def call(self, inputs, *args, **kwargs):
         input_shape = tf.shape(inputs)
         batch_size, height, width, channels = input_shape[
@@ -109,6 +109,9 @@ class CrossScaleNonLocalAttention(Layer):
         y = tf.map_fn(process_patches, (theta, phi_patch,
                       g_patch), dtype=tf.float32)
         y = tf.squeeze(y, axis=1)
+        output_shape = (batch_size, self.scale * height,
+                        self.scale * width, channels)
+        y = tf.reshape(y, output_shape)
         return y
 
         # y = []
