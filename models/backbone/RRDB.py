@@ -16,6 +16,7 @@ def residual_in_residual_channel_attention_dense_block(x, kernel_initializer=tf.
     identity = x
     for _ in range(3):
         x = residual_dense_block(x, kernel_initializer=kernel_initializer)
+    x = x * 0.2
     x = ChannelAttention(
         reduction=16, kernel_initializer=kernel_initializer)(x)
     return add([x, identity])

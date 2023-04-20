@@ -3,90 +3,150 @@ import numpy as np
 from tensorflow.keras.layers import Conv2D, Reshape, Softmax, add, PReLU, Layer, GlobalAveragePooling2D, multiply
 
 
-def cross_scale_non_local_attention(input_tensor, channel_reduction=2, scale=3, patch_size=3, softmax_factor=10):
-    batch_size, height, width, channels = input_tensor.shape
-    inter_channels = channels // channel_reduction
-    inter_height = height // scale
-    inter_width = width // scale
+class CrossScaleNonLocalAttention(Layer):
+    def __init__(self, channel_reduction=2, scale=4, patch_size=3, softmax_factor=10, kernel_initializer=tf.keras.initializers.GlorotNormal(), **kwargs):
+        super(CrossScaleNonLocalAttention, self).__init__(**kwargs)
+        self.channel_reduction = channel_reduction
+        self.scale = scale
+        self.patch_size = patch_size
+        self.softmax_factor = softmax_factor
+        self.kernel_initializer = kernel_initializer
 
-    g = Conv2D(filters=channels,
-               kernel_size=(1, 1),
-               strides=(1, 1),
-               padding='same')(input_tensor)
-    g = PReLU()(g)  # (b,h,w,c)
+    def build(self, input_shape):
+        channels = input_shape[-1]
+        inter_channels = channels // self.channel_reduction
 
-    g_patch = tf.image.extract_patches(images=g,
-                                       sizes=(1, scale*patch_size,
-                                              scale*patch_size, 1),
-                                       strides=(1, scale, scale, 1),
-                                       padding='same')  # (b,h/s,w/s,s*p*s*p*c)
-    g_patch = tf.reshape(tensor=g_patch,
-                         shape=(batch_size, inter_height*inter_width, scale*patch_size, scale*patch_size, channels))
-    # (b,N,s*p,s*p,c) N = hw/(s*s)
+        self.theta = Conv2D(filters=inter_channels,
+                            kernel_size=(1, 1),
+                            strides=(1, 1),
+                            padding='same',
+                            kernel_initializer=self.kernel_initializer,)
+        self.theta_PRelu = PReLU(shared_axes=[1, 2])
 
-    theta = Conv2D(filters=inter_channels,
-                   kernel_size=(1, 1),
-                   strides=(1, 1),
-                   padding='same',)(input_tensor)
-    theta = PReLU()(theta)  # (b,h,w,c/2)
+        self.phi = Conv2D(filters=inter_channels,
+                          kernel_size=(1, 1),
+                          strides=(1, 1),
+                          padding='same',
+                          kernel_initializer=self.kernel_initializer,)
+        self.phi_PRelu = PReLU(shared_axes=[1, 2])
 
-    phi = tf.image.resize(input_tensor, size=(
-        inter_height, inter_width), method=tf.image.ResizeMethod.BILINEAR)
-    phi = Conv2D(filters=inter_channels,
-                 kernel_size=(1, 1),
-                 strides=(1, 1),
-                 padding='same')(phi)
-    phi = PReLU()(phi)  # (b,h/s,w/s,c/2)
+        self.g = Conv2D(filters=channels,
+                        kernel_size=(1, 1),
+                        strides=(1, 1),
+                        padding='same',
+                        kernel_initializer=self.kernel_initializer,)
+        self.g_PRelu = PReLU(shared_axes=[1, 2])
+        return super().build(input_shape)
 
-    phi_patch = tf.image.extract_patches(images=phi,
-                                         sizes=(1, patch_size, patch_size, 1),
-                                         strides=(1, 1, 1, 1),
-                                         rates=(1, 1, 1, 1),
-                                         padding='same')  # (b,h/s,w/s,p*p*c/2)
-    phi_patch = tf.reshape(tensor=phi_patch,
-                           shape=(batch_size, inter_height*inter_width, patch_size, patch_size, inter_channels))
-    # (b,N,p,p,c/2) N = hw/(s*s)
+    @tf.function
+    def call(self, inputs, *args, **kwargs):
+        input_shape = tf.shape(inputs)
+        batch_size, height, width, channels = input_shape[
+            0], input_shape[1], input_shape[2], input_shape[3]
+        inter_height, inter_width, inter_channels = height // self.scale, width // self.scale, channels // self.channel_reduction
+        # theta = self.theta_PRelu(self.theta(inputs))  # (b,h,w,c/2)
+        theta = self.theta_PRelu(self.theta(inputs))  # (b,h,w,c/2)
+        phi = tf.image.resize(inputs, size=(inter_height, inter_width),
+                              method=tf.image.ResizeMethod.BILINEAR)  # (b,h/s,w/s,c)
+        # phi = self.phi_PRelu(self.phi(phi))  # (b,h/s,w/s,c/2)
+        phi = self.phi_PRelu(self.phi(phi))  # (b,h/s,w/s,c/2)
+        phi_patch = tf.image.extract_patches(images=phi,
+                                             sizes=(1, self.patch_size,
+                                                    self.patch_size, 1),
+                                             strides=(1, 1, 1, 1),
+                                             rates=(1, 1, 1, 1),
+                                             padding='SAME')  # (b,h/s,w/s,p*p*c/2)
+        phi_patch = tf.reshape(tensor=phi_patch,
+                               shape=(-1, inter_height*inter_width, self.patch_size, self.patch_size, inter_channels))
+        # (b,N,p,p,c/2) N = hw/(s*s)
+        # g = self.g_PRelu(self.g(inputs))  # (b,h,w,c)
+        g = self.g_PRelu(self.g(inputs))  # (b,h,w,c)
+        g_patch = tf.image.extract_patches(images=g,
+                                           sizes=(1, self.scale*self.patch_size,
+                                                  self.scale*self.patch_size, 1),
+                                           strides=(1, self.scale,
+                                                    self.scale, 1),
+                                           rates=(1, 1, 1, 1),
+                                           padding='SAME')  # (b,h/s,w/s,s*p*s*p*c)
+        g_patch = tf.reshape(tensor=g_patch,
+                             shape=(-1, inter_height*inter_width, self.scale*self.patch_size, self.scale*self.patch_size, channels))
+        # (b,N,s*p,s*p,c) N = hw/(s*s)
+        # phi_patch = tf.unstack(phi_patch, axis=0)
+        # g_patch = tf.unstack(g_patch, axis=0)
 
-    phi_patch = tf.unstack(phi_patch, axis=0)
-    g_patch = tf.unstack(g_patch, axis=0)
-    theta = tf.split(theta, num_or_size_splits=batch_size, axis=0)
+        def process_patches(args):
+            theta_i, phi_patch_i, g_patch_i = args
+            theta_i = tf.expand_dims(theta_i, axis=0)  # (1,h,w,c/2)
 
-    y = []
+            max_phi_patch_i = tf.sqrt(tf.reduce_sum(
+                tf.square(phi_patch_i), axis=[1, 2, 3], keepdims=True))
+            max_phi_patch_i = tf.maximum(max_phi_patch_i, 1e-6)
+            phi_patch_i = phi_patch_i / max_phi_patch_i
 
-    for theta_i, phi_patch_i, g_patch_i in zip(theta, phi_patch, g_patch):
-        # theta_i (1,h,w,c/2) split
-        # phi_patch_i (N,p,p,c/2) unstack
-        # g_patch_i (N,s*p,s*p,c) unstack
-        # normalize phi_patch_i
-        max_phi_patch_i = tf.sqrt(tf.reduce_sum(
-            tf.square(phi_patch_i), axis=[1, 2, 3], keepdims=True))
-        max_phi_patch_i = tf.maximum(max_phi_patch_i, tf.fill(
-            max_phi_patch_i.shape, max_phi_patch_i))
-        phi_patch_i = phi_patch_i / max_phi_patch_i
+            phi_patch_i = tf.transpose(phi_patch_i,
+                                       perm=(1, 2, 3, 0))  # (p,p,c/2,N)
 
-        phi_patch_i = tf.transpose(phi_patch_i,
-                                   perm=(1, 2, 3, 0))  # (p,p,c/2,N)
+            y_i = tf.nn.conv2d(input=theta_i,
+                               filters=phi_patch_i,
+                               strides=(1, 1),
+                               padding='SAME',
+                               data_format='NHWC')  # (1,h,w,N)
+            y_i_softmax = tf.nn.softmax(
+                y_i*self.softmax_factor, axis=-1)  # feature map
 
-        y_i = tf.nn.conv2d(input=theta_i,
-                           filters=phi_patch_i,
-                           strides=(1, 1),
-                           padding='same',
-                           data_format='NHWC')  # (1,h,w,N)
-        y_i_softmax = tf.nn.softmax(y_i*softmax_factor, axis=-1)  # feature map
+            # g_patch_i (s*p,s*p,c,N)
+            g_patch_i = tf.transpose(g_patch_i, perm=[1, 2, 3, 0])
+            y_i = tf.nn.conv2d_transpose(input=y_i_softmax,
+                                         filters=g_patch_i,
+                                         output_shape=(
+                                             1, self.scale*height, self.scale*width, channels),
+                                         strides=self.scale,
+                                         padding='SAME',
+                                         data_format='NHWC')  # (1,s*h,s*w,c)
+            y_i = y_i / 6
+            return y_i
 
-        # g_patch_i (s*p,s*p,c,N)
-        g_patch_i = tf.transpose(g_patch_i, perm=[1, 2, 3, 0])
-        y_i = tf.nn.conv2d_transpose(input=y_i_softmax,
-                                     filters=g_patch_i,
-                                     output_shape=(
-                                         1, scale*height, scale*width, channels),
-                                     strides=scale,
-                                     padding='SAME',
-                                     data_format='NHWC')  # (1,s*h,s*w,c)
-        y_i = y_i / 6
-        y.append(y_i)
-    y = tf.concat(y, axis=0)
-    return y
+        y = tf.map_fn(process_patches, (theta, phi_patch,
+                      g_patch), dtype=tf.float32)
+        y = tf.squeeze(y, axis=1)
+        return y
+
+        # y = []
+        # for theta_i, phi_patch_i, g_patch_i in zip(theta, phi_patch, g_patch):
+        #     theta_i = tf.expand_dims(theta_i, axis=0)  # (1,h,w,c/2
+        #     # theta_i (1,h,w,c/2) split
+        #     # phi_patch_i (N,p,p,c/2) unstack
+        #     # g_patch_i (N,s*p,s*p,c) unstack
+        #     # normalize phi_patch_i
+        #     max_phi_patch_i = tf.sqrt(tf.reduce_sum(
+        #         tf.square(phi_patch_i), axis=[1, 2, 3], keepdims=True))
+        #     max_phi_patch_i = tf.maximum(max_phi_patch_i, 1e-6)
+        #     phi_patch_i = phi_patch_i / max_phi_patch_i
+
+        #     phi_patch_i = tf.transpose(phi_patch_i,
+        #                                perm=(1, 2, 3, 0))  # (p,p,c/2,N)
+
+        #     y_i = tf.nn.conv2d(input=theta_i,
+        #                        filters=phi_patch_i,
+        #                        strides=(1, 1),
+        #                        padding='same',
+        #                        data_format='NHWC')  # (1,h,w,N)
+        #     y_i_softmax = tf.nn.softmax(
+        #         y_i*self.softmax_factor, axis=-1)  # feature map
+
+        #     # g_patch_i (s*p,s*p,c,N)
+        #     g_patch_i = tf.transpose(g_patch_i, perm=[1, 2, 3, 0])
+        #     y_i = tf.nn.conv2d_transpose(input=y_i_softmax,
+        #                                  filters=g_patch_i,
+        #                                  output_shape=(
+        #                                      1, self.scale*height, self.scale*width, channels),
+        #                                  strides=self.scale,
+        #                                  padding='SAME',
+        #                                  data_format='NHWC')  # (1,s*h,s*w,c)
+        #     y_i = y_i / 6
+        #     y.append(y_i)
+        # y = tf.concat(y, axis=0)
+        # return y
 
 
 class InsclaeNonLocalAttention(Layer):
